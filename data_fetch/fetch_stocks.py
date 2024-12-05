@@ -3,7 +3,7 @@ import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
 import os
-from datetime import datetime
+import time
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,42 +17,78 @@ DB_PORT = os.getenv("DB_PORT")
 
 # Connect to the database
 conn = psycopg2.connect(
-    host=DB_HOST, 
-    database=DB_NAME, 
-    user=DB_USER, 
-    password=DB_PASSWORD, 
+    host=DB_HOST,
+    database=DB_NAME,
+    user=DB_USER,
+    password=DB_PASSWORD,
     port=DB_PORT
 )
-
 cursor = conn.cursor()
 
-# Fetch stock data
-ticker = "AAPL"  # Apple stock
-data = yf.download(ticker, start="2023-01-01", end="2023-12-31")
+# Fetch all stock assets from the 'assets' table
+cursor.execute("SELECT asset_id, asset_name FROM assets WHERE asset_type = 'stock'")
+stocks = cursor.fetchall()  # Returns a list of tuples (asset_id, asset_name)
 
-# Flatten multi-level columns
-data.columns = data.columns.droplevel(0)  # Keep only the second level (Ticker)
-data.columns.name = None  # Remove the name of the index
-print(data.head())
+# Set the date range
+start_date = "2023-01-01"
+end_date = "2023-12-31"
 
-# Rename columns
-data.columns = ['Open', 'Close', 'High', 'Low', 'Volume', 'Adj Close']
-print(data.head())
+for asset_id, ticker in stocks:
+    try:
+        print(f"Fetching data for {ticker} (asset_id: {asset_id})")
+        # Fetch stock data
+        data = yf.download(ticker, start=start_date, end=end_date)
 
-# Iterate over rows and insert into the database
-for date, row in data.iterrows():
-    cursor.execute("""
-        INSERT INTO market_data (asset_id, date, open, close, high, low, volume)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (
-        3,  # Apple asset_id
-        date,  # Use the index as the date
-        None if pd.isna(row['Open']) else float(row['Open']),
-        None if pd.isna(row['Close']) else float(row['Close']),
-        None if pd.isna(row['High']) else float(row['High']),
-        None if pd.isna(row['Low']) else float(row['Low']),
-        None if pd.isna(row['Volume']) else float(row['Volume']),
-    ))
+        if data.empty:
+            print(f"No data found for {ticker}. Skipping...")
+            continue
 
-conn.commit()
+        # Reset index to make 'Date' a column
+        data = data.reset_index()
+
+        # Rename columns to match database columns
+        data = data.rename(columns={
+            'Date': 'date',
+            'Open': 'open',
+            'Close': 'close',
+            'High': 'high',
+            'Low': 'low',
+            'Volume': 'volume',
+        })
+
+        # Keep only the necessary columns
+        data = data[['date', 'open', 'close', 'high', 'low', 'volume']]
+
+        # Handle missing data
+        data = data.replace({pd.NA: None})
+
+        # Insert data into the database
+        for _, row in data.iterrows():
+            cursor.execute("""
+                INSERT INTO market_data (asset_id, date, open, close, high, low, volume)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (asset_id, date) DO NOTHING
+            """, (
+                asset_id,
+                row['date'],
+                row['open'],
+                row['close'],
+                row['high'],
+                row['low'],
+                row['volume']
+            ))
+
+        # Commit after each stock
+        conn.commit()
+        print(f"Data for {ticker} inserted successfully.")
+
+        # Optional: Sleep to respect API rate limits
+        time.sleep(1)
+
+    except Exception as e:
+        print(f"Error processing {ticker}: {e}")
+        conn.rollback()
+        continue
+
+print("Data fetching completed.")
 conn.close()
