@@ -8,3 +8,9 @@ CREATE TABLE market_data (
     low NUMERIC,
     volume BIGINT
 );
+
+
+ALTER TABLE market_data
+ADD CONSTRAINT fk_market
+FOREIGN KEY (market_id)
+REFERENCES markets (market_id);
