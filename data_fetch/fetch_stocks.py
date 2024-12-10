@@ -43,6 +43,10 @@ for asset_id, ticker in stocks:
             print(f"No data found for {ticker}. Skipping...")
             continue
 
+        # Flatten multi-level columns if necessary
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)  # Keep first-level column names
+
         # Reset index to make 'Date' a column
         data = data.reset_index()
 
@@ -56,27 +60,37 @@ for asset_id, ticker in stocks:
             'Volume': 'volume',
         })
 
-        # Keep only the necessary columns
-        data = data[['date', 'open', 'close', 'high', 'low', 'volume']]
+        # Ensure the 'date' column is in proper datetime format
+        data['date'] = pd.to_datetime(data['date'], errors='coerce')
+
+        # Drop rows where 'date' is invalid
+        data = data.dropna(subset=['date'])
 
         # Handle missing data
         data = data.replace({pd.NA: None})
 
+        # Keep only the necessary columns
+        data = data[['date', 'open', 'close', 'high', 'low', 'volume']]
+
         # Insert data into the database
         for _, row in data.iterrows():
-            cursor.execute("""
-                INSERT INTO market_data (asset_id, date, open, close, high, low, volume)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (asset_id, date) DO NOTHING
-            """, (
-                asset_id,
-                row['date'],
-                row['open'],
-                row['close'],
-                row['high'],
-                row['low'],
-                row['volume']
-            ))
+            try:
+                cursor.execute("""
+                    INSERT INTO market_data (asset_id, date, open, close, high, low, volume)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (asset_id, date) DO NOTHING
+                """, (
+                    asset_id,
+                    row['date'].to_pydatetime() if hasattr(row['date'], 'to_pydatetime') else row['date'],
+                    float(row['open']) if pd.notna(row['open']) else None,
+                    float(row['close']) if pd.notna(row['close']) else None,
+                    float(row['high']) if pd.notna(row['high']) else None,
+                    float(row['low']) if pd.notna(row['low']) else None,
+                    int(row['volume']) if pd.notna(row['volume']) else None
+                ))
+            except Exception as row_error:
+                print(f"Error inserting row for {ticker} on {row['date']}: {row_error}")
+                conn.rollback()
 
         # Commit after each stock
         conn.commit()
