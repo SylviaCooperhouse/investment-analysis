@@ -4,6 +4,7 @@ import psycopg2
 from dotenv import load_dotenv
 import os
 import time
+from datetime import datetime  # Import datetime module
 
 # Load environment variables from .env file
 load_dotenv()
@@ -30,8 +31,8 @@ cursor.execute("SELECT asset_id, asset_name FROM assets WHERE asset_type = 'stoc
 stocks = cursor.fetchall()  # Returns a list of tuples (asset_id, asset_name)
 
 # Set the date range
-start_date = "2023-01-01"
-end_date = "2023-12-31"
+start_date = "2024-01-01"
+end_date = datetime.now().strftime("%Y-%m-%d")  # Convert to string formatted as 'YYYY-MM-DD'
 
 for asset_id, ticker in stocks:
     try:

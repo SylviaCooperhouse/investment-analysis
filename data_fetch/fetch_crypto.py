@@ -2,7 +2,7 @@ import requests
 import psycopg2
 from dotenv import load_dotenv
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 # Load environment variables from .env file
@@ -17,18 +17,26 @@ DB_PORT = os.getenv("DB_PORT")
 
 # Connect to the database
 conn = psycopg2.connect(
-    host=DB_HOST, 
-    database=DB_NAME, 
-    user=DB_USER, 
-    password=DB_PASSWORD, 
+    host=DB_HOST,
+    database=DB_NAME,
+    user=DB_USER,
+    password=DB_PASSWORD,
     port=DB_PORT
 )
-
 cursor = conn.cursor()
 
 # Fetch all crypto assets from the 'assets' table
 cursor.execute("SELECT asset_id, asset_name FROM assets WHERE asset_type = 'crypto'")
 cryptos = cursor.fetchall()  # Returns a list of tuples (asset_id, asset_name)
+
+# Set the date range for the last 365 days
+end_date = datetime.now()
+start_date = end_date - timedelta(days=365)
+# the API is only free to download thr last 365 days prices
+
+# Convert start_date and end_date to UNIX timestamps
+start_timestamp = int(start_date.timestamp())
+end_timestamp = int(end_date.timestamp())
 
 # Iterate through each crypto asset and fetch its market data
 for asset_id, crypto_name in cryptos:
@@ -36,8 +44,12 @@ for asset_id, crypto_name in cryptos:
         print(f"Fetching data for {crypto_name} (asset_id: {asset_id})")
         
         # Fetch crypto data from CoinGecko API
-        url = f"https://api.coingecko.com/api/v3/coins/{crypto_name.lower()}/market_chart"
-        params = {'vs_currency': 'usd', 'days': '30'}  # Last 30 days
+        url = f"https://api.coingecko.com/api/v3/coins/{crypto_name.lower()}/market_chart/range"
+        params = {
+            'vs_currency': 'usd',
+            'from': start_timestamp,  # Start date timestamp
+            'to': end_timestamp       # End date timestamp
+        }
         response = requests.get(url, params=params)
         
         if response.status_code != 200:
@@ -45,12 +57,31 @@ for asset_id, crypto_name in cryptos:
             continue
         
         data = response.json()
-        
-        # Insert cryptocurrency prices
+
+        # Group daily data
+        daily_data = {}
         for i, row in enumerate(data['prices']):
-            date = datetime.utcfromtimestamp(row[0] / 1000).date()
+            timestamp = row[0]
+            date = datetime.utcfromtimestamp(timestamp / 1000).date()
             price = row[1]
             volume = data['total_volumes'][i][1] if data['total_volumes'][i][1] is not None else 0
+
+            if date not in daily_data:
+                daily_data[date] = {
+                    'open': price,
+                    'close': price,
+                    'high': price,
+                    'low': price,
+                    'volume': volume
+                }
+            else:
+                daily_data[date]['close'] = price
+                daily_data[date]['high'] = max(daily_data[date]['high'], price)
+                daily_data[date]['low'] = min(daily_data[date]['low'], price)
+                daily_data[date]['volume'] += volume
+
+        # Insert daily aggregated data into the database
+        for date, values in daily_data.items():
             cursor.execute("""
                 INSERT INTO market_data (asset_id, date, open, close, high, low, volume)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -58,12 +89,13 @@ for asset_id, crypto_name in cryptos:
             """, (
                 asset_id,
                 date,
-                price,
-                price,  # Use the same price for open/close/high/low
-                price,
-                price,
-                volume
+                values['open'],
+                values['close'],
+                values['high'],
+                values['low'],
+                values['volume']
             ))
+        
         # Commit after each cryptocurrency
         conn.commit()
         print(f"Data for {crypto_name} inserted successfully.")
