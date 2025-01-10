@@ -9,3 +9,11 @@ CREATE TABLE market_data (
     volume BIGINT,
     PRIMARY KEY (asset_id, date)
 );
+
+-- Add an index for fast filtering by asset_id and date
+CREATE INDEX idx_market_data_asset_date
+ON market_data (asset_id, date);
+
+-- Add an index on date if you frequently query by date alone
+CREATE INDEX idx_market_data_date
+ON market_data (date);
