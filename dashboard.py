@@ -2,26 +2,23 @@ import dash
 from dash import dcc, html, Input, Output
 import plotly.express as px
 import pandas as pd
-import psycopg2
+from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import os
 
 # Load environment variables
 load_dotenv()
+
+# Fetch environment variables
 DB_HOST = os.getenv("DB_HOST")
 DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_PORT = os.getenv("DB_PORT")
 
-# Connect to the database
-conn = psycopg2.connect(
-    host=DB_HOST,
-    database=DB_NAME,
-    user=DB_USER,
-    password=DB_PASSWORD,
-    port=DB_PORT
-)
+# Create SQLAlchemy engine
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URL)
 
 # Fetch data for the dashboard
 def fetch_data():
@@ -33,11 +30,16 @@ def fetch_data():
         WHERE md.date = (SELECT MAX(date) FROM market_data)
         GROUP BY a.asset_type
     """
-    portfolio_data = pd.read_sql(portfolio_query, conn)
+    portfolio_data = pd.read_sql(portfolio_query, engine)
     
-    # VaR data
-    var_query = "SELECT * FROM daily_var ORDER BY date DESC LIMIT 30"
-    var_data = pd.read_sql(var_query, conn)
+    # VaR data from portfolio_risk
+    var_query = """
+        SELECT date, historical_var, parametric_var, monte_carlo_var, type, asset_type
+        FROM portfolio_risk
+        ORDER BY date DESC
+        LIMIT 30
+    """
+    var_data = pd.read_sql(var_query, engine)
     
     return portfolio_data, var_data
 
@@ -50,33 +52,47 @@ portfolio_data, var_data = fetch_data()
 # Layout
 app.layout = html.Div([
     html.H1("Portfolio Risk Dashboard", style={'textAlign': 'center'}),
-    
+
     # Portfolio Overview
     html.Div([
         html.H2("Portfolio Overview"),
         dcc.Graph(
             id="portfolio-allocation",
-            figure=px.pie(portfolio_data, names="asset_type", values="total_value",
-                          title="Portfolio Allocation by Asset Type")
+            figure=px.pie(
+                portfolio_data, 
+                names="asset_type", 
+                values="total_value",
+                title="Portfolio Allocation by Asset Type"
+            )
         ),
     ]),
-    
+
     # VaR Metrics
     html.Div([
         html.H2("Risk Metrics"),
         dcc.Graph(
             id="var-trend",
-            figure=px.line(var_data, x="date", y=["historical_var", "parametric_var", "monte_carlo_var"],
-                           title="VaR Trend (Last 30 Days)")
+            figure=px.line(
+                var_data, 
+                x="date", 
+                y=["historical_var", "parametric_var", "monte_carlo_var"],
+                color="asset_type",
+                title="VaR Trend (Last 30 Days)"
+            )
         ),
     ]),
-    
-    # Historical Performance
+
+    # Historical Performance (Placeholder for future data)
     html.Div([
         html.H2("Historical Performance"),
         dcc.Graph(
             id="portfolio-performance",
-            # Add more historical data here for the figure
+            figure={  # Add more historical data here for the figure in the future
+                "data": [],
+                "layout": {
+                    "title": "Portfolio Historical Performance (Coming Soon)"
+                }
+            }
         )
     ]),
 ])

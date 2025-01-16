@@ -1,6 +1,5 @@
 CREATE TABLE portfolio_risk (
     date DATE PRIMARY KEY,
-	
     historical_var NUMERIC,
     parametric_var NUMERIC,
     monte_carlo_var NUMERIC
@@ -23,6 +22,14 @@ WHERE asset_type IS NULL;
 UPDATE portfolio_risk
 SET type = 'rate of return'
 WHERE type IS NULL;
+
+
+-- Adjust primary key
+-- Drop the existing primary key constraint
+ALTER TABLE public.portfolio_risk DROP CONSTRAINT IF EXISTS portfolio_risk_pkey;
+
+-- Add the new primary key constraint
+ALTER TABLE public.portfolio_risk ADD CONSTRAINT portfolio_risk_pkey PRIMARY KEY (date, type, asset_type);
 
 -- Verify the update
 SELECT * FROM portfolio_risk;

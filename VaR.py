@@ -46,7 +46,7 @@ returns = price_data.pct_change(fill_method=None).dropna()
 cursor.execute("SELECT asset_id, shares FROM assets")
 portfolio_data = cursor.fetchall()
 portfolio_weights = {
-    row[0]: row[1] for row in portfolio_data
+    row[0]: float(row[1]) for row in portfolio_data  # Convert shares to float explicitly
 }
 
 # Calculate portfolio weights
@@ -88,26 +88,25 @@ JOIN assets ON market_data.asset_id = assets.asset_id
 WHERE market_data.date = (SELECT MAX(date) FROM market_data);
 """
 cursor.execute(portfolio_value_query)
-portfolio_value = cursor.fetchone()[0]
+portfolio_value = float(cursor.fetchone()[0])  # Convert to float explicitly
 
-crypto_value = sum(price_data.iloc[-1][crypto_returns.columns] * np.array([portfolio_weights.get(asset_id, 0) for asset_id in crypto_returns.columns]))
-stock_value = sum(price_data.iloc[-1][stock_returns.columns] * np.array([portfolio_weights.get(asset_id, 0) for asset_id in stock_returns.columns]))
+crypto_value = float(sum(price_data.iloc[-1][crypto_returns.columns] * np.array([portfolio_weights.get(asset_id, 0) for asset_id in crypto_returns.columns])))
+stock_value = float(sum(price_data.iloc[-1][stock_returns.columns] * np.array([portfolio_weights.get(asset_id, 0) for asset_id in stock_returns.columns])))
 
 # Convert VaR (returns) to VaR (values)
 def convert_var_to_value(var, total_value):
-    return [v * total_value for v in var]
+    return [float(v) * total_value for v in var]
 
 crypto_var_value = convert_var_to_value(crypto_var, crypto_value)
 stock_var_value = convert_var_to_value(stock_var, stock_value)
 portfolio_var_value = convert_var_to_value(portfolio_var, portfolio_value)
 
-# Store results in the database
 def store_var_results(date, var_results, var_type, asset_type):
     try:
         cursor.execute("""
-            INSERT INTO portfolio_risk (date, historical_var, parametric_var, monte_carlo_var, type)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (date, type) DO UPDATE SET
+            INSERT INTO portfolio_risk (date, historical_var, parametric_var, monte_carlo_var, type, asset_type)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (date, type, asset_type) DO UPDATE SET
                 historical_var = EXCLUDED.historical_var,
                 parametric_var = EXCLUDED.parametric_var,
                 monte_carlo_var = EXCLUDED.monte_carlo_var;
@@ -116,7 +115,8 @@ def store_var_results(date, var_results, var_type, asset_type):
             float(var_results[0]),
             float(var_results[1]),
             float(var_results[2]),
-            f"{var_type}_{asset_type}"
+            var_type,
+            asset_type
         ))
         conn.commit()
     except Exception as e:
